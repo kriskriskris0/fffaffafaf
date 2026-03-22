@@ -5,6 +5,7 @@ import os
 import math
 from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
+from db import search_text_chunks, search_image_chunks
 
 def extract_pdf_data(path, skip_first_images=0, skip_last_images=0, out_dir="extracted_data"):
     """
@@ -167,23 +168,12 @@ def create_index(embeddings):
     return embeddings
 
 
-def retrieve(question, embeddings, chunks, model, tokenizer, k=3):
-    """Ищет k самых похожих кусков на вопрос (по косинусной близости)."""
-    query_vec = _get_embedding(question, model, tokenizer)
-    similarities = cosine_similarity(query_vec.reshape(1, -1), embeddings)[0]
-    top_k_idx = np.argsort(similarities)[-k:][::-1]
-    return [chunks[i] for i in top_k_idx]
-def retrieve_image(question, image_embeddings, image_paths, model, tokenizer):
-    """Ищет 1 самое похожее изображение на вопрос (по косинусной близости). Возвращает путь."""
-    if not len(image_embeddings):
-        return None
-        
-    query_vec = _get_embedding(question, model, tokenizer)
-    similarities = cosine_similarity(query_vec.reshape(1, -1), image_embeddings)[0]
-    best_idx = np.argmax(similarities)
-    
-    # Можно добавить порог отсечения (similarity > threshold),
-    # чтобы не возвращать мусор, если совпадения слабые.
-    # if similarities[best_idx] < 0.2: return None
-    
-    return image_paths[best_idx]
+def retrieve(question, model, tokenizer, k=3):
+    """Ищет k самых похожих кусков на вопрос (через pgvector DB)."""
+    query_vec = _get_embedding(question, model, tokenizer)[0]
+    return search_text_chunks(query_vec, k)
+
+def retrieve_image(question, model, tokenizer):
+    """Ищет 1 самое похожее изображение на вопрос (через pgvector DB). Возвращает путь."""
+    query_vec = _get_embedding(question, model, tokenizer)[0]
+    return search_image_chunks(query_vec)

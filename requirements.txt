@@ -13,3 +13,5 @@ pillow
 opencv-python
 safetensors
 torchvision>=0.43.0
+psycopg2-binary
+pgvector

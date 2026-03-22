@@ -13,6 +13,7 @@ from config import UIEmbedderConfig
 from main import UIEmbedderPipeline
 
 from rag_core import extract_pdf_data, chunk_text, embed_chunks, create_index, retrieve, retrieve_image
+from db import init_db, clear_db, insert_text_chunks, insert_image_chunks
 
 # Конфигурация по умолчанию
 DEFAULT_TEXT_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"  # 2B модель для векторизации текста
@@ -97,6 +98,11 @@ def generate_answer(question, context_chunks, model, tokenizer):
 st.set_page_config(page_title="📚 Qwen RAG + Images", layout="wide")
 st.title("📚 Qwen RAG + Images")
 
+try:
+    init_db()
+except Exception as e:
+    st.error(f"Не удалось подключиться к базе данных PostgreSQL. Убедитесь, что она запущена: {e}")
+
 # Настройки моделей
 text_model_name = st.sidebar.text_input("Модель для текста:", value=DEFAULT_TEXT_MODEL)
 
@@ -123,9 +129,10 @@ if uploaded_file:
         f.write(uploaded_file.read())
     st.success("PDF загружен")
 
-    if "text_embeddings" not in st.session_state:
+    if "pdf_processed" not in st.session_state:
         # ---- ЭТАП 1: Векторизация текста ----
         with st.spinner("Обрабатываю текст документа..."):
+            clear_db()
             all_text, image_text_pairs = extract_pdf_data(
                 "temp.pdf", 
                 skip_first_images=skip_first, 
@@ -135,6 +142,9 @@ if uploaded_file:
             # Векторизуем текст с помощью загруженной LLM
             text_chunks = chunk_text(all_text)
             text_embeddings = embed_chunks(text_chunks, st.session_state.chat_model, st.session_state.chat_tokenizer)
+            
+            # Сохраняем текстовые эмбеддинги в БД
+            insert_text_chunks(text_chunks, text_embeddings)
             
         # ---- ОЧИСТКА LLM ДЛЯ ОСВОБОЖДЕНИЯ VRAM ПЕРЕД ВИЗУАЛЬНЫМ ЭМБЕДДЕРОМ ----
         with st.spinner("Выгружаю текстовую модель для освобождения VRAM..."):
@@ -183,14 +193,10 @@ if uploaded_file:
                     else:
                         st.warning(f"Пропуск изображения {idx+1}: размерность эмбеддинга {emb_arr.shape[1]} != {text_embeddings.shape[1]}")
 
-            st.session_state.text_embeddings = text_embeddings
-            st.session_state.text_chunks = list(text_chunks)
-            
             if image_embeddings:
-                st.session_state.image_embeddings = np.vstack(image_embeddings)
-            else:
-                st.session_state.image_embeddings = np.array([])
-            st.session_state.image_paths = image_paths
+                insert_image_chunks(image_paths, image_embeddings)
+                
+            st.session_state.pdf_processed = True
             
         # ---- ОЧИСТКА ЭМБЕДДЕРА И ВОЗВРАТ LLM ----
         with st.spinner("Выгружаю эмбеддер и возвращаю LLM для чата..."):
@@ -207,16 +213,12 @@ if uploaded_file:
         with st.spinner("Генерирую ответ..."):
             context = retrieve(
                 question, 
-                st.session_state.text_embeddings, 
-                st.session_state.text_chunks, 
                 st.session_state.chat_model, 
                 st.session_state.chat_tokenizer
             )
             
             best_snippet_path = retrieve_image(
                 question,
-                st.session_state.image_embeddings,
-                st.session_state.image_paths,
                 st.session_state.chat_model,
                 st.session_state.chat_tokenizer
             )
