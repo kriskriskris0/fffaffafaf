@@ -13,7 +13,7 @@ from config import UIEmbedderConfig
 from main import UIEmbedderPipeline
 
 from rag_core import extract_pdf_data, chunk_text, embed_chunks, create_index, retrieve, retrieve_image
-from db import init_db, clear_db, insert_text_chunks, insert_image_chunks
+from db import init_db, clear_db, insert_text_chunks, insert_image_chunks, is_db_empty
 
 # Конфигурация по умолчанию
 DEFAULT_TEXT_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"  # 2B модель для векторизации текста
@@ -72,14 +72,20 @@ def load_embedder_pipeline():
         pipeline = UIEmbedderPipeline(config)
         return pipeline
 
-def generate_answer(question, context_chunks, model, tokenizer):
-    if not context_chunks:
-        return "Нет контекста."
-    context = "\n\n".join(context_chunks[:2])
-    messages = [
-        {"role": "system", "content": "Ты — полезный ассистент. Отвечай кратко по контексту."},
-        {"role": "user", "content": f"Контекст:\n{context}\n\nВопрос: {question}"}
-    ]
+def generate_answer(question, context_chunks, model, tokenizer, db_empty=False):
+    if db_empty:
+        messages = [
+            {"role": "system", "content": "Ты — полезный ассистент. В данный момент база знаний пуста, вежливо сообщи об этом пользователю и скажи, что для работы с документами их нужно загрузить. Ответь на вопрос без использования документов."},
+            {"role": "user", "content": f"Вопрос: {question}"}
+        ]
+    else:
+        if not context_chunks:
+            return "Нет контекста."
+        context = "\n\n".join(context_chunks[:2])
+        messages = [
+            {"role": "system", "content": "Ты — полезный ассистент. Отвечай кратко по контексту."},
+            {"role": "user", "content": f"Контекст:\n{context}\n\nВопрос: {question}"}
+        ]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
@@ -130,6 +136,7 @@ if uploaded_file:
     st.success("PDF загружен")
 
     if "pdf_processed" not in st.session_state:
+        st.text_input("Введите вопрос:", disabled=True, key="chat_disabled")
         # ---- ЭТАП 1: Векторизация текста ----
         with st.spinner("Обрабатываю текст документа..."):
             clear_db()
@@ -207,10 +214,18 @@ if uploaded_file:
             st.session_state.chat_tokenizer = tokenizer
 
         st.success(f"Готово! Обработано фрагментов текста: {len(text_chunks)}, визуальных компонентов: {len(image_embeddings)}")
+        st.rerun()
 
-    question = st.text_input("Введите вопрос:")
-    if question:
-        with st.spinner("Генерирую ответ..."):
+# Чат доступен всегда (если нет активной обработки файла выше)
+question = st.text_input("Введите вопрос:", key="chat_enabled")
+if question:
+    db_empty = is_db_empty()
+    
+    with st.spinner("Генерирую ответ..."):
+        if db_empty:
+            answer = generate_answer(question, [], st.session_state.chat_model, st.session_state.chat_tokenizer, db_empty=True)
+            best_snippet_paths = []
+        else:
             context = retrieve(
                 question, 
                 st.session_state.chat_model, 
@@ -223,11 +238,10 @@ if uploaded_file:
                 st.session_state.chat_tokenizer
             )
             
-            answer = generate_answer(question, context, st.session_state.chat_model, st.session_state.chat_tokenizer)
+            answer = generate_answer(question, context, st.session_state.chat_model, st.session_state.chat_tokenizer, db_empty=False)
             
-        st.markdown("### 🤖 Ответ:")
-        st.write(answer)
-        if best_snippet_paths:
-            st.markdown("### 🖼️ Наиболее подходящие фрагменты UI (в целях дебага, в дальнейшем сменить на полное изображение с выделенным участком):")
-            for image_path in best_snippet_paths:
-                st.image(image_path)
+    st.markdown("### 🤖 Ответ:")
+    st.write(answer)
+    if best_snippet_paths:
+        st.markdown("### 🖼️ Наиболее подходящие фрагменты UI (в целях дебага, в дальнейшем сменить на полное изображение с выделенным участком):")
+        st.image(best_snippet_paths)
