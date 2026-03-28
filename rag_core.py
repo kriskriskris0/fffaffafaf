@@ -3,9 +3,8 @@ import torch
 import fitz  # PyMuPDF
 import os
 import math
-from PIL import Image
-from sklearn.metrics.pairwise import cosine_similarity
 from db import search_text_chunks, search_image_chunks
+from text_preprocessing import preprocess_text
 
 def extract_pdf_data(path, skip_first_images=0, skip_last_images=0, out_dir="extracted_data"):
     """
@@ -124,9 +123,13 @@ def chunk_text(text, chunk_size=800, overlap=150):
 def _get_embedding(text_or_texts, model, tokenizer, max_length=512):
     """
     Получает эмбеддинг текста (или списка) через Qwen2.5 (mean-pool последнего hidden state).
+    Перед токенизацией применяет очистку, удаление стоп-слов и лемматизацию.
     """
     if isinstance(text_or_texts, str):
         text_or_texts = [text_or_texts]
+
+    # Предобработка: очистка, стоп-слова, лемматизация
+    text_or_texts = [preprocess_text(t) or t for t in text_or_texts]
 
     inputs = tokenizer(
         text_or_texts,
@@ -174,6 +177,6 @@ def retrieve(question, model, tokenizer, k=3):
     return search_text_chunks(query_vec, k)
 
 def retrieve_image(question, model, tokenizer):
-    """Ищет 1 самое похожее изображение на вопрос (через pgvector DB). Возвращает путь."""
+    """Ищет N самых похожих изображений на вопрос (через pgvector DB). Возвращает путь."""
     query_vec = _get_embedding(question, model, tokenizer)[0]
     return search_image_chunks(query_vec)

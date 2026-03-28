@@ -217,7 +217,7 @@ if uploaded_file:
                 st.session_state.chat_tokenizer
             )
             
-            best_snippet_path = retrieve_image(
+            best_snippet_paths = retrieve_image(
                 question,
                 st.session_state.chat_model,
                 st.session_state.chat_tokenizer
@@ -227,6 +227,7 @@ if uploaded_file:
             
         st.markdown("### 🤖 Ответ:")
         st.write(answer)
-        if best_snippet_path:
-            st.markdown("### 🖼️ Наиболее подходящий фрагмент UI:")
-            st.image(best_snippet_path)
+        if best_snippet_paths:
+            st.markdown("### 🖼️ Наиболее подходящие фрагменты UI (в целях дебага, в дальнейшем сменить на полное изображение с выделенным участком):")
+            for image_path in best_snippet_paths:
+                st.image(image_path)
