@@ -3,9 +3,10 @@ import sys
 import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from PIL import Image
+from PIL import Image, ImageDraw
 import numpy as np
 import gc
+import ast
 
 # Добавляем путь к подмодулю визуального эмбеддера
 sys.path.append(os.path.abspath("visual-language-ui-embedder"))
@@ -127,6 +128,8 @@ if "chat_model" not in st.session_state and "chat_tokenizer" not in st.session_s
 skip_first = st.sidebar.number_input("Пропустить N первых изображений:", min_value=0, value=0)
 skip_last = st.sidebar.number_input("Пропустить M последних изображений:", min_value=0, value=0)
 
+bbox_color = st.sidebar.color_picker("Цвет обводки BBox:", value="#FF0000")
+
 # Загрузка PDF
 uploaded_file = st.file_uploader("Загрузите PDF", type="pdf")
 
@@ -165,9 +168,7 @@ if uploaded_file:
             
             image_embeddings = []
             image_paths = []
-            
-            snippets_dir = "extracted_data/snippets"
-            os.makedirs(snippets_dir, exist_ok=True)
+            image_bboxes = []
             
             for idx, pair in enumerate(image_text_pairs):
                 img = Image.open(pair["image_path"]).convert("RGB")
@@ -183,7 +184,7 @@ if uploaded_file:
                 for bbox, emb_list in emb_dict.items():
                     emb_arr = np.array(emb_list).reshape(1, -1)
                     if emb_arr.shape[1] == text_embeddings.shape[1]:
-                        # Вырезаем фрагмент из картинки
+                        # Вычисляем абсолютные координаты bbox
                         # Координаты bbox нормированы (от 0 до 1)
                         x1, y1, x2, y2 = bbox
                         left = int(x1 * original_width)
@@ -191,17 +192,17 @@ if uploaded_file:
                         right = int(x2 * original_width)
                         lower = int(y2 * original_height)
                         
-                        snippet = img.crop((left, upper, right, lower))
-                        snippet_path = os.path.join(snippets_dir, f"snippet_{idx}_{left}_{upper}.png")
-                        snippet.save(snippet_path)
-                        
                         image_embeddings.append(emb_arr)
-                        image_paths.append(snippet_path)
+                        image_paths.append(pair["image_path"])
+                        image_bboxes.append((left, upper, right, lower))
                     else:
                         st.warning(f"Пропуск изображения {idx+1}: размерность эмбеддинга {emb_arr.shape[1]} != {text_embeddings.shape[1]}")
 
             if image_embeddings:
-                insert_image_chunks(image_paths, image_embeddings)
+                try:
+                    insert_image_chunks(image_paths, image_bboxes, image_embeddings)
+                except Exception as e:
+                    st.error(f"Ошибка сохранения эмбеддингов изображений в БД: {e}")
                 
             st.session_state.pdf_processed = True
             
@@ -243,5 +244,18 @@ if question:
     st.markdown("### 🤖 Ответ:")
     st.write(answer)
     if best_snippet_paths:
-        st.markdown("### 🖼️ Наиболее подходящие фрагменты UI (в целях дебага, в дальнейшем сменить на полное изображение с выделенным участком):")
-        st.image(best_snippet_paths)
+        st.markdown("### 🖼️ Наиболее подходящие фрагменты UI (полное изображение с выделенным участком):")
+        # best_snippet_paths - list of tuples (image_path, bbox_str)
+        rendered_images = []
+        for path, bbox_str in best_snippet_paths:
+            try:
+                img = Image.open(path).convert("RGB")
+                draw = ImageDraw.Draw(img)
+                left, upper, right, lower = ast.literal_eval(bbox_str)
+                draw.rectangle([left, upper, right, lower], outline=bbox_color, width=3)
+                rendered_images.append(img)
+            except Exception as e:
+                st.error(f"Ошибка при отрисовке BBox: {e}")
+                
+        if rendered_images:
+            st.image(rendered_images)
