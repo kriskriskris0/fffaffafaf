@@ -84,7 +84,7 @@ def generate_answer(question, context_chunks, model, tokenizer, db_empty=False):
             return "Нет контекста."
         context = "\n\n".join(context_chunks[:2])
         messages = [
-            {"role": "system", "content": "Ты — полезный ассистент. Отвечай кратко по контексту."},
+            {"role": "system", "content": "Ты — полезный ассистент инструктирующий пользователей. Отвечай кратко по контексту."},
             {"role": "user", "content": f"Контекст:\n{context}\n\nВопрос: {question}"}
         ]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -228,19 +228,20 @@ if question:
             best_snippet_paths = []
         else:
             context = retrieve(
-                question, 
-                st.session_state.chat_model, 
-                st.session_state.chat_tokenizer
-            )
-            
-            best_snippet_paths = retrieve_image(
                 question,
                 st.session_state.chat_model,
                 st.session_state.chat_tokenizer
             )
-            
+
+
             answer = generate_answer(question, context, st.session_state.chat_model, st.session_state.chat_tokenizer, db_empty=False)
-            
+
+            best_snippet_paths = retrieve_image(
+                answer,
+                st.session_state.chat_model,
+                st.session_state.chat_tokenizer
+            )
+
     st.markdown("### 🤖 Ответ:")
     st.write(answer)
     if best_snippet_paths:
