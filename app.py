@@ -140,7 +140,7 @@ if uploaded_file:
 
     if "pdf_processed" not in st.session_state:
         st.text_input("Введите вопрос:", disabled=True, key="chat_disabled")
-        # ---- ЭТАП 1: Векторизация текста ----
+        # ---- ЭТАП 1: Подготовка данных ----
         with st.spinner("Обрабатываю текст документа..."):
             clear_db()
             all_text, image_text_pairs = extract_pdf_data(
@@ -149,62 +149,66 @@ if uploaded_file:
                 skip_last_images=skip_last
             )
             
-            # Векторизуем текст с помощью загруженной LLM
             text_chunks = chunk_text(all_text)
-            text_embeddings = embed_chunks(text_chunks, st.session_state.chat_model, st.session_state.chat_tokenizer)
-            
-            # Сохраняем текстовые эмбеддинги в БД
-            insert_text_chunks(text_chunks, text_embeddings)
             
         # ---- ОЧИСТКА LLM ДЛЯ ОСВОБОЖДЕНИЯ VRAM ПЕРЕД ВИЗУАЛЬНЫМ ЭМБЕДДЕРОМ ----
         with st.spinner("Выгружаю текстовую модель для освобождения VRAM..."):
-            del st.session_state.chat_model
-            del st.session_state.chat_tokenizer
+            if "chat_model" in st.session_state:
+                del st.session_state.chat_model
+            if "chat_tokenizer" in st.session_state:
+                del st.session_state.chat_tokenizer
             free_memory()
 
-        # ---- ЭТАП 2: Визуальный Эмбеддер ----
-        with st.spinner("Загружаю визуальный эмбеддер и векторизую изображения..."):
+        # ---- ЭТАП 2: Единый Эмбеддер для текста и изображений ----
+        with st.spinner("Загружаю визуальный эмбеддер и векторизую текст и изображения..."):
             vis_pipeline = load_embedder_pipeline()
             
-            image_embeddings = []
-            image_paths = []
-            image_bboxes = []
+            # Векторизуем текст с помощью визуального эмбеддера
+            with st.spinner("Векторизую текст через единый энкодер..."):
+                text_embeddings = vis_pipeline.process(image=None, text_content=text_chunks)
+                insert_text_chunks(text_chunks, text_embeddings)
             
-            for idx, pair in enumerate(image_text_pairs):
-                img = Image.open(pair["image_path"]).convert("RGB")
-                context = pair["context_text"]
+            # Векторизуем изображения
+            with st.spinner("Векторизую изображения..."):
+                image_embeddings = []
+                image_paths = []
+                image_bboxes = []
                 
-                try:
-                    emb_dict = vis_pipeline.process(img, context)
-                except IndexError:
-                    continue
-                
-                original_width, original_height = img.size
-                
-                for bbox, emb_list in emb_dict.items():
-                    emb_arr = np.array(emb_list).reshape(1, -1)
-                    if emb_arr.shape[1] == text_embeddings.shape[1]:
-                        # Вычисляем абсолютные координаты bbox
-                        # Координаты bbox нормированы (от 0 до 1)
-                        x1, y1, x2, y2 = bbox
-                        left = int(x1 * original_width)
-                        upper = int(y1 * original_height)
-                        right = int(x2 * original_width)
-                        lower = int(y2 * original_height)
-                        
-                        image_embeddings.append(emb_arr)
-                        image_paths.append(pair["image_path"])
-                        image_bboxes.append((left, upper, right, lower))
-                    else:
-                        st.warning(f"Пропуск изображения {idx+1}: размерность эмбеддинга {emb_arr.shape[1]} != {text_embeddings.shape[1]}")
+                for idx, pair in enumerate(image_text_pairs):
+                    img = Image.open(pair["image_path"]).convert("RGB")
+                    context = pair["context_text"]
+                    
+                    try:
+                        emb_dict = vis_pipeline.process(img, context)
+                    except IndexError:
+                        continue
+                    
+                    original_width, original_height = img.size
+                    
+                    for bbox, emb_list in emb_dict.items():
+                        emb_arr = np.array(emb_list).reshape(1, -1)
+                        if emb_arr.shape[1] == text_embeddings.shape[1]:
+                            # Вычисляем абсолютные координаты bbox
+                            # Координаты bbox нормированы (от 0 до 1)
+                            x1, y1, x2, y2 = bbox
+                            left = int(x1 * original_width)
+                            upper = int(y1 * original_height)
+                            right = int(x2 * original_width)
+                            lower = int(y2 * original_height)
+                            
+                            image_embeddings.append(emb_arr)
+                            image_paths.append(pair["image_path"])
+                            image_bboxes.append((left, upper, right, lower))
+                        else:
+                            st.warning(f"Пропуск изображения {idx+1}: размерность эмбеддинга {emb_arr.shape[1]} != {text_embeddings.shape[1]}")
 
-            if image_embeddings:
-                try:
-                    insert_image_chunks(image_paths, image_bboxes, image_embeddings)
-                except Exception as e:
-                    st.error(f"Ошибка сохранения эмбеддингов изображений в БД: {e}")
-                
-            st.session_state.pdf_processed = True
+                if image_embeddings:
+                    try:
+                        insert_image_chunks(image_paths, image_bboxes, image_embeddings)
+                    except Exception as e:
+                        st.error(f"Ошибка сохранения эмбеддингов изображений в БД: {e}")
+                    
+                st.session_state.pdf_processed = True
             
         # ---- ОЧИСТКА ЭМБЕДДЕРА И ВОЗВРАТ LLM ----
         with st.spinner("Выгружаю эмбеддер и возвращаю LLM для чата..."):
