@@ -142,14 +142,12 @@ if uploaded_file:
         st.text_input("Введите вопрос:", disabled=True, key="chat_disabled")
         # ---- ЭТАП 1: Подготовка данных ----
         with st.spinner("Обрабатываю текст документа..."):
-            clear_db()
+            #clear_db()
             all_text, image_text_pairs = extract_pdf_data(
                 "temp.pdf", 
                 skip_first_images=skip_first, 
                 skip_last_images=skip_last
             )
-            
-            text_chunks = chunk_text(all_text)
             
         # ---- ОЧИСТКА LLM ДЛЯ ОСВОБОЖДЕНИЯ VRAM ПЕРЕД ВИЗУАЛЬНЫМ ЭМБЕДДЕРОМ ----
         with st.spinner("Выгружаю текстовую модель для освобождения VRAM..."):
@@ -162,11 +160,8 @@ if uploaded_file:
         # ---- ЭТАП 2: Единый Эмбеддер для текста и изображений ----
         with st.spinner("Загружаю визуальный эмбеддер и векторизую текст и изображения..."):
             vis_pipeline = load_embedder_pipeline()
-            
-            # Векторизуем текст с помощью визуального эмбеддера
-            with st.spinner("Векторизую текст через единый энкодер..."):
-                text_embeddings = vis_pipeline.process(image=None, text_content=text_chunks)
-                insert_text_chunks(text_chunks, text_embeddings)
+
+            context_chunks_counter = 0
             
             # Векторизуем изображения
             with st.spinner("Векторизую изображения..."):
@@ -177,17 +172,19 @@ if uploaded_file:
                 for idx, pair in enumerate(image_text_pairs):
                     img = Image.open(pair["image_path"]).convert("RGB")
                     context = pair["context_text"]
-                    
+                    context_chunk = chunk_text(context)
+
                     try:
+                        context_embedding = vis_pipeline.process(image=None, text_content=context)
                         emb_dict = vis_pipeline.process(img, context)
                     except IndexError:
                         continue
-                    
+
                     original_width, original_height = img.size
-                    
+
                     for bbox, emb_list in emb_dict.items():
                         emb_arr = np.array(emb_list).reshape(1, -1)
-                        if emb_arr.shape[1] == text_embeddings.shape[1]:
+                        if emb_arr.shape[1] == context_embedding.shape[1]:
                             # Вычисляем абсолютные координаты bbox
                             # Координаты bbox нормированы (от 0 до 1)
                             x1, y1, x2, y2 = bbox
@@ -195,16 +192,17 @@ if uploaded_file:
                             upper = int(y1 * original_height)
                             right = int(x2 * original_width)
                             lower = int(y2 * original_height)
-                            
+
                             image_embeddings.append(emb_arr)
                             image_paths.append(pair["image_path"])
                             image_bboxes.append((left, upper, right, lower))
                         else:
-                            st.warning(f"Пропуск изображения {idx+1}: размерность эмбеддинга {emb_arr.shape[1]} != {text_embeddings.shape[1]}")
+                            st.warning(f"Пропуск изображения {idx+1}: размерность эмбеддинга {emb_arr.shape[1]} != {context_embedding.shape[1]}")
 
                 if image_embeddings:
                     try:
-                        insert_image_chunks(image_paths, image_bboxes, image_embeddings)
+                        insert_image_chunks(context_chunk, context_embedding, image_paths, image_bboxes, image_embeddings)
+                        context_chunks_counter += 1
                     except Exception as e:
                         st.error(f"Ошибка сохранения эмбеддингов изображений в БД: {e}")
                     
@@ -218,8 +216,10 @@ if uploaded_file:
             st.session_state.chat_model = model
             st.session_state.chat_tokenizer = tokenizer
 
-        st.success(f"Готово! Обработано фрагментов текста: {len(text_chunks)}, визуальных компонентов: {len(image_embeddings)}")
+        st.success(f"Готово! Обработано фрагментов текста: {context_chunks_counter}, визуальных компонентов: {len(image_embeddings)}")
         st.rerun()
+
+        print(f"Готово! Обработано фрагментов текста: {context_chunks_counter}, визуальных компонентов: {len(image_embeddings)}")
 
 # Чат доступен всегда (если нет активной обработки файла выше)
 question = st.text_input("Введите вопрос:", key="chat_enabled")
@@ -231,16 +231,19 @@ if question:
             answer = generate_answer(question, [], st.session_state.chat_model, st.session_state.chat_tokenizer, db_empty=True)
             best_snippet_paths = []
         else:
-            context = retrieve(
+            retrieve_result = retrieve(
                 question,
                 st.session_state.chat_model,
                 st.session_state.chat_tokenizer
             )
+            text_chunk_id = retrieve_result[0]
+            context = retrieve_result[1]
 
 
             answer = generate_answer(question, context, st.session_state.chat_model, st.session_state.chat_tokenizer, db_empty=False)
 
             best_snippet_paths = retrieve_image(
+                text_chunk_id,
                 answer,
                 st.session_state.chat_model,
                 st.session_state.chat_tokenizer

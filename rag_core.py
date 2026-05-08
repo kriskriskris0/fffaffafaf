@@ -176,7 +176,7 @@ def retrieve(question, model, tokenizer, k=3):
     query_vec = _get_embedding(question, model, tokenizer)[0]
     return search_text_chunks(query_vec, k)
 
-def retrieve_image(question, model, tokenizer):
+def retrieve_image(text_chunk_id, question, model, tokenizer):
     """Ищет N самых похожих изображений на вопрос (через pgvector DB). Возвращает путь."""
     query_vec = _get_embedding(question, model, tokenizer)[0]
-    return search_image_chunks(query_vec)
+    return search_image_chunks(text_chunk_id, query_vec)

@@ -35,17 +35,18 @@ def init_db():
         embedding vector
     );
     """)
-    
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS image_chunks (
         id SERIAL PRIMARY KEY,
         image_path TEXT,
         bbox TEXT,
-        embedding vector
+        embedding vector,
+        text_chunk_id BIGINT REFERENCES text_chunks (id)
     );
     """)
-    cur.execute("ALTER TABLE image_chunks ADD COLUMN IF NOT EXISTS bbox TEXT;")
-    
+
+
     cur.close()
     conn.close()
 
@@ -79,21 +80,29 @@ def insert_text_chunks(chunks, embeddings):
     cur.close()
     conn.close()
 
-def insert_image_chunks(image_paths, bboxes, embeddings):
+def insert_image_chunks(context_chunk, context_embedding, image_paths, bboxes, image_embeddings):
     if len(image_paths) == 0:
         return
         
     conn = get_connection()
     register_vector(conn)
     cur = conn.cursor()
-    for path, bbox, emb in zip(image_paths, bboxes, embeddings):
+    context_emb_arr = np.array(context_embedding).flatten()
+    cur.execute(
+        "INSERT INTO text_chunks (content, embedding) VALUES (%s, %s) RETURNING id",
+        (context_chunk, context_emb_arr)
+    )
+    text_chunk_id = cur.fetchone()[0]
+    for path, bbox, emb in zip(image_paths, bboxes, image_embeddings):
         emb_arr = np.array(emb).flatten()
+
         cur.execute(
-            "INSERT INTO image_chunks (image_path, bbox, embedding) VALUES (%s, %s, %s)",
-            (path, str(bbox), emb_arr)
+            "INSERT INTO image_chunks (image_path, bbox, embedding, text_chunk_id) VALUES (%s, %s, %s, %s)",
+            (path, str(bbox), emb_arr, text_chunk_id)
         )
     conn.commit()
     cur.close()
+    print(f"Загружен текстовый чанк {text_chunk_id}")
     conn.close()
 
 def clear_db():
@@ -113,29 +122,32 @@ def search_text_chunks(query_embedding, k=3):
     query_arr = np.array(query_embedding).flatten()
     
     cur.execute("""
-        SELECT content FROM text_chunks
+        SELECT id, content FROM text_chunks
         ORDER BY embedding <=> %s
         LIMIT %s;
     """, (query_arr, k))
     
-    results = [row[0] for row in cur.fetchall()]
+    results = [cur.fetchall()]
     cur.close()
     conn.close()
     
     return results
 
-def search_image_chunks(query_embedding):
+def search_image_chunks(text_chunk_id, query_embedding):
     conn = get_connection()
     register_vector(conn)
     cur = conn.cursor()
     
     query_arr = np.array(query_embedding).flatten()
+
+    print(text_chunk_id)
     
     cur.execute("""
         SELECT image_path, bbox FROM image_chunks
         ORDER BY embedding <=> %s
+        WHERE text_chunk_id = %s
         LIMIT 5;
-    """, (query_arr,))
+    """, (query_arr, text_chunk_id))
     
     rows = cur.fetchall()
     cur.close()
