@@ -231,28 +231,50 @@ question = st.text_input("Введите вопрос:", key="chat_enabled")
 if question:
     db_empty = is_db_empty()
     
-    with st.spinner("Генерирую ответ..."):
-        if db_empty:
+    if db_empty:
+        # БД пуста — не нужно менять модели, просто генерируем ответ чат-моделью
+        with st.spinner("Генерирую ответ..."):
             answer = generate_answer(question, [], st.session_state.chat_model, st.session_state.chat_tokenizer, db_empty=True)
             best_snippet_paths = []
-        else:
+    else:
+        # ---- ШАГ 1: Выгружаем чат-модель, загружаем embedder для retrieve ----
+        with st.spinner("Выгружаю чат-модель для поиска по базе..."):
+            if "chat_model" in st.session_state:
+                del st.session_state.chat_model
+            if "chat_tokenizer" in st.session_state:
+                del st.session_state.chat_tokenizer
+            free_memory()
+
+        with st.spinner("Загружаю embedder для поиска..."):
+            embedder_pipeline = load_embedder_pipeline()
+
+        # ---- ШАГ 2: Retrieve через embedder (тот же, что при индексации) ----
+        with st.spinner("Ищу релевантные фрагменты..."):
             retrieve_result = retrieve(
                 question,
-                st.session_state.chat_model,
-                st.session_state.chat_tokenizer
+                embedder_pipeline
             )
             text_chunk_ids = [row[0] for row in retrieve_result]
             context = [row[1] for row in retrieve_result]
 
-
-            answer = generate_answer(question, context, st.session_state.chat_model, st.session_state.chat_tokenizer, db_empty=False)
-
             best_snippet_paths = retrieve_image(
                 text_chunk_ids,
-                answer,
-                st.session_state.chat_model,
-                st.session_state.chat_tokenizer
+                question,
+                embedder_pipeline
             )
+
+        # ---- ШАГ 3: Выгружаем embedder, загружаем чат-модель обратно ----
+        with st.spinner("Выгружаю embedder, возвращаю чат-модель..."):
+            del embedder_pipeline
+            free_memory()
+
+            model, tokenizer = load_model(text_model_name)
+            st.session_state.chat_model = model
+            st.session_state.chat_tokenizer = tokenizer
+
+        # ---- ШАГ 4: Генерируем ответ чат-моделью ----
+        with st.spinner("Генерирую ответ..."):
+            answer = generate_answer(question, context, st.session_state.chat_model, st.session_state.chat_tokenizer, db_empty=False)
 
     st.markdown("### 🤖 Ответ:")
     st.write(answer)

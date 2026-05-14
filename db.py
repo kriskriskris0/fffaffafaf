@@ -123,7 +123,7 @@ def search_text_chunks(query_embedding, k=3):
     
     cur.execute("""
         SELECT id, content FROM text_chunks
-        ORDER BY embedding <-> %s DESC
+        ORDER BY embedding <-> %s
         LIMIT %s;
     """, (query_arr, k))
     
@@ -143,7 +143,7 @@ def search_image_chunks(text_chunk_ids, query_embedding):
     cur.execute("""
         SELECT image_path, bbox FROM image_chunks
         WHERE text_chunk_id IN %s
-        ORDER BY embedding <-> %s DESC
+        ORDER BY embedding <-> %s
         LIMIT 1;
     """, (tuple(text_chunk_ids), query_arr))
     

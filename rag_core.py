@@ -173,6 +173,19 @@ def _get_embedding(text_or_texts, model, tokenizer, max_length=512):
     return embeddings.cpu().float().numpy()
 
 
+def _get_embedding_from_pipeline(text_or_texts, pipeline):
+    """
+    Получает эмбеддинг текста через UIEmbedderPipeline (тот же эмбеддер, что использовался при индексации).
+    Это гарантирует, что вектор запроса находится в том же пространстве, что и индексированные вектора.
+    """
+    if isinstance(text_or_texts, str):
+        text_or_texts = [text_or_texts]
+
+    # pipeline.process(image=None, text_content=...) возвращает numpy array (N, D)
+    embeddings = pipeline.process(image=None, text_content=text_or_texts)
+    return embeddings
+
+
 def embed_chunks(chunks, model, tokenizer, batch_size=4):
     """Создаёт эмбеддинги для кусков через Qwen2.5 (батчами для скорости)."""
     embeddings = []
@@ -188,12 +201,12 @@ def create_index(embeddings):
     return embeddings
 
 
-def retrieve(question, model, tokenizer, k=3):
-    """Ищет k самых похожих кусков на вопрос (через pgvector DB)."""
-    query_vec = _get_embedding(question, model, tokenizer)[0]
+def retrieve(question, pipeline, k=3):
+    """Ищет k самых похожих кусков на вопрос (через pgvector DB). Использует embedder pipeline."""
+    query_vec = _get_embedding_from_pipeline(question, pipeline)[0]
     return search_text_chunks(query_vec, k)
 
-def retrieve_image(text_chunk_ids, question, model, tokenizer):
-    """Ищет N самых похожих изображений на вопрос (через pgvector DB). Возвращает путь."""
-    query_vec = _get_embedding(question, model, tokenizer)[0]
+def retrieve_image(text_chunk_ids, question, pipeline):
+    """Ищет N самых похожих изображений на вопрос (через pgvector DB). Использует embedder pipeline."""
+    query_vec = _get_embedding_from_pipeline(question, pipeline)[0]
     return search_image_chunks(text_chunk_ids, query_vec)
