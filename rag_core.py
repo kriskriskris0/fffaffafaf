@@ -26,12 +26,30 @@ def extract_pdf_data(path, skip_first_images=0, skip_last_images=0, out_dir="ext
 
     for page_num in range(len(doc)):
         page = doc[page_num]
+        prev_page = None
+        if page_num > 1:
+            prev_page = doc[page_num - 1]
+
         all_text += page.get_text() + "\n"
         
         # Получаем текстовые блоки: (x0, y0, x1, y1, text, block_no, block_type)
         blocks = page.get_text("blocks")
+
         text_blocks = [b for b in blocks if b[6] == 0] # block_type == 0 is text
-        
+        if prev_page:
+            first_text_block = text_blocks[0]
+            prev_blocks = prev_page.get_text("blocks")
+            for prev_block in prev_blocks:
+                if prev_block[6] == 0:
+                    block = [None] * 7
+                    for i in range(4):
+                        block[i] = prev_block[i] + first_text_block[i]
+                    block[4] = prev_block[4]
+                    block[5] = prev_block[5]
+                    block[6] = prev_block[6]
+                    block = tuple(block)
+                    text_blocks.append(block)
+
         # Получаем изображения на странице
         image_list = page.get_images(full=True)
         
@@ -48,7 +66,7 @@ def extract_pdf_data(path, skip_first_images=0, skip_last_images=0, out_dir="ext
             img_cy = (img_rect.y0 + img_rect.y1) / 2
             
             closest_text = ""
-            min_dist = float('inf')
+            min_dist = 400
             
             # Ищем ближайший текстовый блок
             for tb in text_blocks:
@@ -57,9 +75,8 @@ def extract_pdf_data(path, skip_first_images=0, skip_last_images=0, out_dir="ext
                 
                 # Эвклидово расстояние между центрами
                 dist = math.hypot(img_cx - tb_cx, img_cy - tb_cy)
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_text = tb[4]
+                if dist <= min_dist:
+                    closest_text += tb[4]
             
             # Извлекаем само изображение
             base_image = doc.extract_image(xref)
@@ -176,7 +193,7 @@ def retrieve(question, model, tokenizer, k=3):
     query_vec = _get_embedding(question, model, tokenizer)[0]
     return search_text_chunks(query_vec, k)
 
-def retrieve_image(text_chunk_id, question, model, tokenizer):
+def retrieve_image(text_chunk_ids, question, model, tokenizer):
     """Ищет N самых похожих изображений на вопрос (через pgvector DB). Возвращает путь."""
     query_vec = _get_embedding(question, model, tokenizer)[0]
-    return search_image_chunks(text_chunk_id, query_vec)
+    return search_image_chunks(text_chunk_ids, query_vec)

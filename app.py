@@ -15,6 +15,7 @@ from main import UIEmbedderPipeline
 
 from rag_core import extract_pdf_data, chunk_text, embed_chunks, create_index, retrieve, retrieve_image
 from db import init_db, clear_db, insert_text_chunks, insert_image_chunks, is_db_empty
+from text_preprocessing import preprocess_text
 
 # Конфигурация по умолчанию
 DEFAULT_TEXT_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"  # 2B модель для векторизации текста
@@ -82,6 +83,7 @@ def generate_answer(question, context_chunks, model, tokenizer, db_empty=False):
     else:
         if not context_chunks:
             return "Нет контекста."
+        context_chunks = [preprocess_text(chunk) for chunk in context_chunks]
         context = "\n\n".join(context_chunks[:2])
         messages = [
             {"role": "system", "content": "Ты — полезный ассистент инструктирующий пользователей. Отвечай кратко по контексту."},
@@ -199,10 +201,13 @@ if uploaded_file:
                         else:
                             st.warning(f"Пропуск изображения {idx+1}: размерность эмбеддинга {emb_arr.shape[1]} != {context_embedding.shape[1]}")
 
-                if image_embeddings:
+                #if image_embeddings:
                     try:
                         insert_image_chunks(context_chunk, context_embedding, image_paths, image_bboxes, image_embeddings)
                         context_chunks_counter += 1
+                        image_embeddings = []
+                        image_paths = []
+                        image_bboxes = []
                     except Exception as e:
                         st.error(f"Ошибка сохранения эмбеддингов изображений в БД: {e}")
                     
@@ -236,14 +241,14 @@ if question:
                 st.session_state.chat_model,
                 st.session_state.chat_tokenizer
             )
-            text_chunk_id = retrieve_result[0]
-            context = retrieve_result[1]
+            text_chunk_ids = [row[0] for row in retrieve_result]
+            context = [row[1] for row in retrieve_result]
 
 
             answer = generate_answer(question, context, st.session_state.chat_model, st.session_state.chat_tokenizer, db_empty=False)
 
             best_snippet_paths = retrieve_image(
-                text_chunk_id,
+                text_chunk_ids,
                 answer,
                 st.session_state.chat_model,
                 st.session_state.chat_tokenizer

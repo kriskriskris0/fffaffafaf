@@ -123,31 +123,28 @@ def search_text_chunks(query_embedding, k=3):
     
     cur.execute("""
         SELECT id, content FROM text_chunks
-        ORDER BY embedding <=> %s
+        ORDER BY embedding <-> %s DESC
         LIMIT %s;
     """, (query_arr, k))
     
-    results = [cur.fetchall()]
+    results = [(row[0], row[1]) for row in cur.fetchall()]
     cur.close()
     conn.close()
     
     return results
 
-def search_image_chunks(text_chunk_id, query_embedding):
+def search_image_chunks(text_chunk_ids, query_embedding):
     conn = get_connection()
     register_vector(conn)
     cur = conn.cursor()
     
     query_arr = np.array(query_embedding).flatten()
-
-    print(text_chunk_id)
     
     cur.execute("""
         SELECT image_path, bbox FROM image_chunks
-        ORDER BY embedding <=> %s
-        WHERE text_chunk_id = %s
-        LIMIT 5;
-    """, (query_arr, text_chunk_id))
+        WHERE text_chunk_id IN %s
+        ORDER BY embedding <-> %s DESC;
+    """, (tuple(text_chunk_ids), query_arr))
     
     rows = cur.fetchall()
     cur.close()
