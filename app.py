@@ -9,7 +9,7 @@ import gc
 import ast
 
 # Добавляем путь к подмодулю визуального эмбеддера
-sys.path.append(os.path.abspath("visual-language-ui-embedder"))
+sys.path.append(os.path.abspath("../visual-language-ui-embedder"))
 from config import UIEmbedderConfig
 from main import UIEmbedderPipeline
 
@@ -174,13 +174,17 @@ if uploaded_file:
                 for idx, pair in enumerate(image_text_pairs):
                     img = Image.open(pair["image_path"]).convert("RGB")
                     context = pair["context_text"]
-                    context_chunk = chunk_text(context)
+
+                    if context is None or context == "":
+                        continue
+
+                    context_chunk = chunk_text(context, 100, 20)
 
                     try:
                         context_embedding = vis_pipeline.process(image=None, text_content=context)
                         emb_dict = vis_pipeline.process(img, context)
-                    except IndexError:
-                        continue
+                    except IndexError as e:
+                        raise RuntimeError(e)
 
                     original_width, original_height = img.size
 
